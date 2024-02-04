@@ -126,7 +126,7 @@ class Config:
 
         reqs = {
             "compare": ("size", "mtime", "hash"),
-            "hash_fail_fallback": ("size", "mtime", None),
+            "hash_fail_fallback": ("size", "mtime", "sha1", None),
             "tag_conflict": (True, False),
         }
         for AB in "AB":

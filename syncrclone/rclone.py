@@ -696,6 +696,19 @@ class Rclone:
             cmdmatch += ["--files-from", tmpfile, src, dst]
             self.call(cmdmatch, stream=True)
 
+    def calculatehash(self, path, hashsum):
+        cmd = ["hashsum"]
+        cmd += [hashsum]
+        cmd += ["--download"]
+        cmd += [path]
+        return self.call(cmd, stream=True).split(' ')[0]
+
+    def lsjson(self, path):
+        cmd = ["lsjson"]
+        cmd += ["--hash"]
+        cmd += [path]
+        return json.loads(self.call(cmd, stream=True))
+
     def copylog(self, remote, srcfile, logname):
         config = self.config
         AB = remote

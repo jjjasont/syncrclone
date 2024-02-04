@@ -3,6 +3,7 @@ import json
 import time
 import sys, os, shutil
 import warnings
+import pandas as pd
 
 from . import debug, log
 from . import utils
@@ -56,9 +57,24 @@ class SyncRClone:
         log(f"Refreshed file list on A '{config.remoteA}'")
         log(utils.file_summary(self.currA))
 
+        for a in self.currA:
+            a["remote"] = config.remoteA
+        for a in self.prevA:
+            a["remote"] = config.remoteA
+        #print(pd.DataFrame(self.currA[0]))
+        #print(pd.DataFrame(self.prevA[0]))
+
         self.currB, self.prevB = listB.join()
         log(f"Refreshed file list on B '{config.remoteB}'")
         log(utils.file_summary(self.currB))
+        for b in self.currB:
+            b["remote"] = config.remoteB
+        for b in self.prevB:
+            b["remote"] = config.remoteB
+        #print(pd.DataFrame(self.currB[0]))
+        #print(pd.DataFrame(self.prevB[0]))
+
+        #print("------------")
 
         if config.set_lock:
             self.rclone.check_lock()
@@ -71,6 +87,8 @@ class SyncRClone:
         self.currA0 = self.currA.copy()
         self.currB0 = self.currB.copy()
 
+        self.copy_miss_hash(self.currA, self.prevA)
+        self.copy_miss_hash(self.currB, self.prevB)
         self.remove_common_files()
         self.process_non_common()  # builds new,del,tag,backup,trans,move lists
 
@@ -339,6 +357,22 @@ class SyncRClone:
                     pa = f"{attr}{AB}"
                 debug("   ", pa, getattr(self, pa))
 
+    def copy_miss_hash(self, fileList1, fileList2):
+        config = self.config
+        if config.hash_fail_fallback == "sha1":
+
+            commonPaths = set(file["Path"] for file in fileList1)
+            commonPaths.intersection_update(file["Path"] for file in fileList2)
+
+            for path in commonPaths:
+                q = {"Path": path}
+                h1 = fileList1[q].get("Hashes", {})
+                h2 = fileList2[q].get("Hashes", {})
+                if "sha1" in h1 and "sha1" not in h2:
+                    h2["sha1"] = h1["sha1"]
+                elif "sha1" in h2 and "sha1" not in h1:
+                    h1["sha1"] = h2["sha1"]
+
     def remove_common_files(self):
         """
         Removes files common in the curr list from the curr lists and,
@@ -351,6 +385,22 @@ class SyncRClone:
         delpaths = set()
         for path in commonPaths:
             q = {"Path": path}
+            #if config.hash_fail_fallback == "sha1":
+                # gothrough currA & prevA, if sha1 is in one file but not the other, copy sha1
+            #    h1 = self.currA[q].get("Hashes", {})
+            #    h2 = self.prevA[q].get("Hashes", {})
+            #    if "sha1" in h1 and "sha1" not in h2:
+            #        h2["sha1"] = h1["sha1"]
+            #    elif "sha1" in h2 and "sha1" not in h1:
+            #        h1["sha1"] = h2["sha1"]
+                # gothrough currB & prevB, if sha1 is in one file but not the other, copy sha1
+            #    h1 = self.currB[q].get("Hashes", {})
+            #    h2 = self.prevB[q].get("Hashes", {})
+            #    if "sha1" in h1 and "sha1" not in h2:
+            #        h2["sha1"] = h1["sha1"]
+            #    elif "sha1" in h2 and "sha1" not in h1:
+            #        h1["sha1"] = h2["sha1"]
+
             # We KNOW they exists for both
             fileA, fileB = self.currA[q], self.currB[q]
             if not self.compare(fileA, fileB):
@@ -674,14 +724,48 @@ class SyncRClone:
             )
 
             if common:
+                # Common hash found.
+                # if compare between different remote and sha1 only available on either 1, copy over
+                # return true/false based on common hash
+                # The check will be checking all common hash, so if other hash doesn't equal. false is returned anyway
+                print("common hash found")
+                #print(pd.DataFrame(file1))
+                #print(pd.DataFrame(file2))
+                #if config.hash_fail_fallback == "sha1":
+                #    if "sha1" in h1 and "sha1" not in h2:
+                #        h2["sha1"] = h1["sha1"]
+                #    elif "sha1" in h2 and "sha1" not in h1:
+                #        h1["sha1"] = h2["sha1"]
+                #print("common hash found - just before return value")
+                print(pd.DataFrame(file1))
+                print(pd.DataFrame(file2))
                 return all(h1[k] == h2[k] for k in common)
 
             if not common:
-                msg = "No common hashes found and/or one or both remotes do not provide hashes"
+                msg = "No common hashes found and/or one or both remotes do not provide hashes "
+                msg += file1.get("remote")+file1.get("Path")
+                msg += " "
+                msg += file2.get("remote")+file2.get("Path")
             else:
                 msg = "One or both remotes are missing hashes"
 
-            if config.hash_fail_fallback:
+            if config.hash_fail_fallback == "sha1":
+                # No common hash. request for sha1 if sha1 is not on the list, return true/false by comparing sha1
+                msg += f". Using sha1 as common hash. calculate hash if necessary"
+                warnings.warn(msg)
+                print(pd.DataFrame(file1))
+                print(pd.DataFrame(file2))
+                if "sha1" not in h1:
+                    print("calculate "+file1.get("remote")+file1.get("Path"))
+                    h1["sha1"] = self.rclone.calculatehash(file1.get("remote")+file1.get("Path"), "sha1")
+                if "sha1" not in h2:
+                    print("calculate "+file2.get("remote")+file2.get("Path"))
+                    h2["sha1"] = self.rclone.calculatehash(file2.get("remote")+file2.get("Path"), "sha1")
+                print(pd.DataFrame(file1))
+                print(pd.DataFrame(file2))
+                print(h1["sha1"] == h2["sha1"])
+                return h1["sha1"] == h2["sha1"]
+            elif config.hash_fail_fallback:
                 msg += f". Falling back to '{config.hash_fail_fallback}'"
                 warnings.warn(msg)
                 compare = config.hash_fail_fallback
@@ -739,12 +823,13 @@ class SyncRClone:
         # transfers
         currA = self.currA0.copy()
         currB = self.currB0.copy()
+        remote = ""
 
         for AB in "AB":
             if AB == "A":
-                currAB, currBA, BA = currA, currB, "B"
+                currAB, currBA, BA, remote = currA, currB, "B", self.config.remoteA
             else:
-                currAB, currBA, BA = currB, currA, "A"
+                currAB, currBA, BA, remote = currB, currA, "A", self.config.remoteB
 
             for filename in getattr(self, f"del{AB}"):
                 currAB.remove(Path=filename)
@@ -752,13 +837,15 @@ class SyncRClone:
             for filenameOLD, filenameNEW in getattr(self, f"moves{AB}"):
                 q = currAB.pop({"Path": filenameOLD})
                 q["Path"] = filenameNEW
+                print("moves Path:"+remote+filename)
+                q["Hashes"] = self.rclone.lsjson(remote+filename)[0]["Hashes"]
                 currAB.add(q)
 
         for AB in "AB":
             if AB == "A":
-                currAB, currBA, BA = currA, currB, "B"
+                currAB, currBA, BA, remote = currA, currB, "B", self.config.remoteA
             else:
-                currAB, currBA, BA = currB, currA, "A"
+                currAB, currBA, BA, remote = currB, currA, "A", self.config.remoteB
 
             for filename in getattr(self, f"trans{BA}2{AB}"):
                 if filename.startswith(".syncrclone"):  # We don't care about these
@@ -767,7 +854,9 @@ class SyncRClone:
                 q = {"Path": filename}
                 if q in currAB:  # Remove the old
                     currAB.remove(q)
-                file = currBA[q]
+                file = currBA[q].copy()
+                print("trans Path:"+remote+filename)
+                file["Hashes"] = self.rclone.lsjson(remote+filename)[0]["Hashes"]
                 # file['_copied'] = True # Set this so that on the next run, if using reuse_hashes, it is recomputed
                 currAB.add(file)
 

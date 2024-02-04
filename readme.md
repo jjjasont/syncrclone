@@ -1,4 +1,4 @@
-# syncrclone
+# syncrclone with hash fallback (supporting sha1)
 
 Robust, Configurable, Bi-Directional sync between *any* two rclone remotes with automatic conflict resolution and backups.
 
